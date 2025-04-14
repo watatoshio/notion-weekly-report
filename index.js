@@ -9,6 +9,8 @@ const cron = require('node-cron');
 const NOTION_API_KEY = process.env.NOTION_API_KEY;
 const NOTION_PAGE_ID = process.env.NOTION_PAGE_ID; // カンマ区切りの複数ページID
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+// 週報を作成するページID
+const WEEKLY_REPORT_PAGE_ID = '37380149ec3e47e99e8f533c3486ab89';
 
 // Notionクライアントの初期化
 const notion = new Client({ auth: NOTION_API_KEY });
@@ -19,9 +21,9 @@ const configuration = new Configuration({
 });
 const openai = new OpenAIApi(configuration);
 
-// 最終チェック日を保存する変数
+// 最終チェック日を保存する変数 (初期値: 1週間前)
 let lastCheckedDate = new Date();
-lastCheckedDate.setDate(lastCheckedDate.getDate() - 7); // 初回は1週間前から
+lastCheckedDate.setDate(lastCheckedDate.getDate() - 7);
 
 // Notionの更新を取得する関数 - ページ階層探索バージョン
 async function explorePageStructure(pageId, depth = 0, maxDepth = 2) {
@@ -97,6 +99,9 @@ async function getNotionUpdates() {
   const pageIds = NOTION_PAGE_ID.split(',').map(id => id.trim());
   let allUpdates = [];
   
+  // 現在の日付を取得（処理開始時点）
+  const currentDate = new Date();
+  
   // 各ページを順番に処理
   for (const pageId of pageIds) {
     console.log(`Processing page: ${pageId}`);
@@ -104,19 +109,35 @@ async function getNotionUpdates() {
     allUpdates = [...allUpdates, ...updates];
   }
   
-  const currentDate = new Date();
-  lastCheckedDate = currentDate; // 最終チェック日を更新
-  return allUpdates;
+  // 期間情報の追加
+  const periodStart = new Date(lastCheckedDate);
+  const periodEnd = new Date(currentDate);
+  
+  // 次回のために最終チェック日を更新
+  lastCheckedDate = currentDate;
+  
+  return {
+    updates: allUpdates,
+    period: {
+      start: periodStart,
+      end: periodEnd
+    }
+  };
 }
 
 // ChatGPTで週報分析を行う関数
-async function analyzeWeeklyUpdates(updates) {
+async function analyzeWeeklyUpdates(data) {
+  const { updates, period } = data;
+  
   if (updates.length === 0) {
-    return "今週は更新がありませんでした。";
+    return `期間: ${period.start.toLocaleString('ja-JP')} 〜 ${period.end.toLocaleString('ja-JP')}\n\n今週は更新がありませんでした。`;
   }
   
+  const startDateStr = period.start.toLocaleString('ja-JP');
+  const endDateStr = period.end.toLocaleString('ja-JP');
+  
   const prompt = `
-以下は私のNotionで過去1週間に更新されたページの内容です。これらの更新内容を分析して、以下の形式で週報フィードバックを作成してください：
+以下は私のNotionで ${startDateStr} から ${endDateStr} までの期間に更新されたページの内容です。これらの更新内容を分析して、以下の形式で週報フィードバックを作成してください：
 
 1. 今週の進捗まとめ
 2. 達成した項目
@@ -127,7 +148,7 @@ async function analyzeWeeklyUpdates(updates) {
 更新内容：
 ${updates.map(update => `
 タイトル: ${update.title}
-最終更新: ${new Date(update.lastEditedTime).toLocaleString()}
+最終更新: ${new Date(update.lastEditedTime).toLocaleString('ja-JP')}
 内容:
 ${update.content}
 -------------------
@@ -143,26 +164,28 @@ ${update.content}
       ],
     });
     
-    return completion.data.choices[0].message.content;
+    // 期間情報を先頭に追加
+    const periodInfo = `期間: ${startDateStr} 〜 ${endDateStr}\n\n`;
+    return periodInfo + completion.data.choices[0].message.content;
   } catch (error) {
     console.error("Error generating weekly report:", error);
-    return "週報の生成中にエラーが発生しました: " + error.message;
+    return `期間: ${startDateStr} 〜 ${endDateStr}\n\n週報の生成中にエラーが発生しました: ${error.message}`;
   }
 }
 
-// 週報をNotionに書き込む関数 - 複数ページ対応
+// 週報をNotionに書き込む関数 - 指定ページ対応
 async function writeWeeklyReportToNotion(report) {
   const today = new Date();
   const reportTitle = `週報 ${today.getFullYear()}/${today.getMonth() + 1}/${today.getDate()}`;
   
   try {
-    // 最初のページIDを親ページとして使用
-    const parentPageId = NOTION_PAGE_ID.split(',')[0].trim();
+    // 指定されたページIDを親ページとして使用
+    const parentPageId = WEEKLY_REPORT_PAGE_ID;
     
     // 新しいページを作成
     const response = await notion.pages.create({
       parent: {
-        page_id: parentPageId, // 最初のページの下に作成
+        page_id: parentPageId, // 指定されたページの下に作成
       },
       properties: {
         title: {
@@ -184,7 +207,7 @@ async function writeWeeklyReportToNotion(report) {
               {
                 type: "text",
                 text: {
-                  content: "今週のAIフィードバック",
+                  content: "週次AIフィードバック",
                 },
               },
             ],
@@ -232,20 +255,22 @@ app.get('/generate-report', async (req, res) => {
     
     // ページ更新の確認
     res.write('Notionページの更新を確認中...\n');
-    const updates = await getNotionUpdates();
+    const data = await getNotionUpdates();
+    const updates = data.updates;
+    res.write(`期間: ${data.period.start.toLocaleString('ja-JP')} 〜 ${data.period.end.toLocaleString('ja-JP')}\n`);
     res.write(`${updates.length}件の更新を検出しました\n`);
     
     // 更新内容のサマリーを表示
     if (updates.length > 0) {
       res.write('\n更新されたページ一覧:\n');
       updates.forEach(update => {
-        res.write(`- ${update.title} (${new Date(update.lastEditedTime).toLocaleString()})\n`);
+        res.write(`- ${update.title} (${new Date(update.lastEditedTime).toLocaleString('ja-JP')})\n`);
       });
     }
     
     // レポート生成
     res.write('\nAIによる週報を生成中...\n');
-    const report = await analyzeWeeklyUpdates(updates);
+    const report = await analyzeWeeklyUpdates(data);
     
     // Notionに書き込み
     res.write('週報をNotionに保存中...\n');
@@ -267,12 +292,17 @@ app.get('/generate-report', async (req, res) => {
 // シンプルなJSONレスポンスバージョン
 app.get('/api/generate-report', async (req, res) => {
   try {
-    const updates = await getNotionUpdates();
+    const data = await getNotionUpdates();
+    const updates = data.updates;
     console.log(`Found ${updates.length} updated pages`);
-    const report = await analyzeWeeklyUpdates(updates);
+    const report = await analyzeWeeklyUpdates(data);
     const reportUrl = await writeWeeklyReportToNotion(report);
     res.json({ 
       success: true, 
+      period: {
+        start: data.period.start.toISOString(),
+        end: data.period.end.toISOString()
+      },
       updatesCount: updates.length, 
       updatedPages: updates.map(u => u.title),
       reportUrl 
@@ -282,14 +312,15 @@ app.get('/api/generate-report', async (req, res) => {
   }
 });
 
-// 週に一度、日曜日の夜に実行するスケジューラー
-cron.schedule('0 20 * * 0', async () => {
-  console.log('Running weekly report generation...');
+// 金曜日の19時に実行するスケジューラー
+cron.schedule('0 19 * * 5', async () => {
+  console.log('Running weekly report generation... (Friday 19:00 JST)');
   try {
-    const updates = await getNotionUpdates();
+    const data = await getNotionUpdates();
+    const updates = data.updates;
     console.log(`Found ${updates.length} updated pages`);
     if (updates.length > 0) {
-      const report = await analyzeWeeklyUpdates(updates);
+      const report = await analyzeWeeklyUpdates(data);
       const reportUrl = await writeWeeklyReportToNotion(report);
       console.log(`Weekly report created: ${reportUrl}`);
     } else {
@@ -306,4 +337,6 @@ cron.schedule('0 20 * * 0', async () => {
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`Configured page IDs: ${NOTION_PAGE_ID.split(',').length}`);
+  console.log(`Weekly report will be created under page: ${WEEKLY_REPORT_PAGE_ID}`);
+  console.log(`Scheduled for Fridays at 19:00 JST`);
 });
