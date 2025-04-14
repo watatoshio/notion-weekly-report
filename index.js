@@ -11,6 +11,14 @@ const NOTION_PAGE_ID = process.env.NOTION_PAGE_ID; // カンマ区切りの複�
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 // 週報を作成するページID
 const WEEKLY_REPORT_PAGE_ID = '37380149ec3e47e99e8f533c3486ab89';
+// ポート設定（Renderで重要）
+const PORT = process.env.PORT || 3000;
+
+// 起動情報を表示
+console.log(`Starting application with config:`);
+console.log(`- PORT: ${PORT}`);
+console.log(`- NOTION_PAGE_ID pages count: ${NOTION_PAGE_ID ? NOTION_PAGE_ID.split(',').length : 0}`);
+console.log(`- WEEKLY_REPORT_PAGE_ID: ${WEEKLY_REPORT_PAGE_ID}`);
 
 // Notionクライアントの初期化
 const notion = new Client({ auth: NOTION_API_KEY });
@@ -69,7 +77,6 @@ async function explorePageStructure(pageId, depth = 0, maxDepth = 2) {
           }
         } catch (blockError) {
           console.error(`Error processing block in page ${pageId}:`, blockError);
-          pageContent.push(`[Error processing block: ${block.type}]`);
         }
       }
       
@@ -110,7 +117,6 @@ async function explorePageStructure(pageId, depth = 0, maxDepth = 2) {
     return updates;
   } catch (error) {
     console.error(`Error exploring page ${pageId}:`, error);
-    console.error(`Error details for ${pageId}:`, JSON.stringify(error.body || error, null, 2));
     return [];
   }
 }
@@ -125,7 +131,6 @@ async function getNotionUpdates() {
   const currentDate = new Date();
   
   console.log(`Checking updates from ${lastCheckedDate.toISOString()} to ${currentDate.toISOString()}`);
-  console.log(`Pages to check: ${pageIds.join(', ')}`);
   
   // 各ページを順番に処理
   for (const pageId of pageIds) {
@@ -201,7 +206,6 @@ ${update.content}
     return periodInfo + completion.data.choices[0].message.content;
   } catch (error) {
     console.error("Error generating weekly report:", error);
-    console.error("OpenAI error details:", JSON.stringify(error.response?.data || error, null, 2));
     return `期間: ${startDateStr} 〜 ${endDateStr}\n\n週報の生成中にエラーが発生しました: ${error.message}`;
   }
 }
@@ -215,43 +219,87 @@ async function checkPageExists(pageId) {
     return true;
   } catch (error) {
     console.error(`Error checking page ${pageId}:`, error);
-    console.error(`Page check error details:`, JSON.stringify(error.body || error, null, 2));
     return false;
   }
 }
 
-// 週報をNotionに書き込む関数 - 指定ページ対応とデータベース対応
+// 週報をNotionに書き込む関数
 async function writeWeeklyReportToNotion(report) {
   const today = new Date();
   const reportTitle = `週報 ${today.getFullYear()}/${today.getMonth() + 1}/${today.getDate()}`;
   
-  // 指定されたページIDを親ページとして使用
-  const parentPageId = WEEKLY_REPORT_PAGE_ID;
-  
   try {
-    console.log(`Checking parent page ${parentPageId} before creating report...`);
-    
     // まず親ページの存在を確認
-    const pageExists = await checkPageExists(parentPageId);
+    const pageExists = await checkPageExists(WEEKLY_REPORT_PAGE_ID);
     if (!pageExists) {
-      console.error(`Parent page ${parentPageId} does not exist or is inaccessible.`);
+      console.error(`Parent page ${WEEKLY_REPORT_PAGE_ID} does not exist or is inaccessible.`);
       return null;
     }
     
-    console.log(`Creating weekly report under parent page ${parentPageId}`);
+    console.log(`Creating weekly report under parent page ${WEEKLY_REPORT_PAGE_ID}`);
     
-    // ページの親タイプを確認（データベースかページか）
-    // まずはページ型として試す
+    // 新しいページを作成
+    const response = await notion.pages.create({
+      parent: {
+        page_id: WEEKLY_REPORT_PAGE_ID
+      },
+      properties: {
+        title: {
+          title: [
+            {
+              text: {
+                content: reportTitle,
+              },
+            },
+          ],
+        },
+      },
+      children: [
+        {
+          object: "block",
+          type: "heading_2",
+          heading_2: {
+            rich_text: [
+              {
+                type: "text",
+                text: {
+                  content: "週次AIフィードバック",
+                },
+              },
+            ],
+          },
+        },
+        {
+          object: "block",
+          type: "paragraph",
+          paragraph: {
+            rich_text: [
+              {
+                type: "text",
+                text: {
+                  content: report,
+                },
+              },
+            ],
+          },
+        },
+      ],
+    });
+    
+    console.log("Weekly report created successfully:", response.url);
+    return response.url;
+  } catch (error) {
+    console.error("Error writing to Notion:", error);
+    
+    // データベースとして試してみる
     try {
-      console.log(`Attempting to create report as child page...`);
-      
-      // 新しいページを作成
+      console.log(`Attempting to create report as database entry...`);
       const response = await notion.pages.create({
         parent: {
-          page_id: parentPageId // 指定されたページの下に作成
+          database_id: WEEKLY_REPORT_PAGE_ID
         },
         properties: {
-          title: {
+          Name: {
             title: [
               {
                 text: {
@@ -259,23 +307,9 @@ async function writeWeeklyReportToNotion(report) {
                 },
               },
             ],
-          },
+          }
         },
         children: [
-          {
-            object: "block",
-            type: "heading_2",
-            heading_2: {
-              rich_text: [
-                {
-                  type: "text",
-                  text: {
-                    content: "週次AIフィードバック",
-                  },
-                },
-              ],
-            },
-          },
           {
             object: "block",
             type: "paragraph",
@@ -293,179 +327,59 @@ async function writeWeeklyReportToNotion(report) {
         ],
       });
       
-      console.log("Weekly report created successfully:", response.url);
+      console.log("Weekly report created as database entry:", response.url);
       return response.url;
-    } catch (pageError) {
-      console.error("Error creating as child page:", pageError);
-      console.error("Page creation error details:", JSON.stringify(pageError.body || pageError, null, 2));
-      
-      // もしページとして失敗したら、データベースとして試してみる
-      if (pageError.status === 400) {
-        try {
-          console.log(`Attempting to create report as database entry...`);
-          const response = await notion.pages.create({
-            parent: {
-              database_id: parentPageId // データベースIDとして使用
-            },
-            properties: {
-              Name: {
-                title: [
-                  {
-                    text: {
-                      content: reportTitle,
-                    },
-                  },
-                ],
-              },
-              // 他にデータベースが必要とするプロパティがあればここに追加
-            },
-            children: [
-              {
-                object: "block",
-                type: "heading_2",
-                heading_2: {
-                  rich_text: [
-                    {
-                      type: "text",
-                      text: {
-                        content: "週次AIフィードバック",
-                      },
-                    },
-                  ],
-                },
-              },
-              {
-                object: "block",
-                type: "paragraph",
-                paragraph: {
-                  rich_text: [
-                    {
-                      type: "text",
-                      text: {
-                        content: report,
-                      },
-                    },
-                  ],
-                },
-              },
-            ],
-          });
-          
-          console.log("Weekly report created as database entry:", response.url);
-          return response.url;
-        } catch (dbError) {
-          console.error("Error creating as database entry:", dbError);
-          console.error("Database creation error details:", JSON.stringify(dbError.body || dbError, null, 2));
-          return null;
-        }
-      }
+    } catch (dbError) {
+      console.error("Error creating as database entry:", dbError);
       return null;
     }
-  } catch (error) {
-    console.error("Error writing to Notion:", error);
-    console.error("Error details:", JSON.stringify(error.body || error, null, 2));
-    return null;
-  }
-}
-
-// Notionのページタイプを検出する関数
-async function detectNotionPageType(pageId) {
-  try {
-    console.log(`Detecting page type for ${pageId}...`);
-    
-    // まずはページとして取得を試みる
-    try {
-      const pageInfo = await notion.pages.retrieve({ page_id: pageId });
-      console.log(`Page ${pageId} is a normal page`);
-      return { type: 'page', info: pageInfo };
-    } catch (pageError) {
-      // ページとして取得できなかった場合、データベースとして試す
-      if (pageError.status === 404) {
-        try {
-          const dbInfo = await notion.databases.retrieve({ database_id: pageId });
-          console.log(`Page ${pageId} is a database`);
-          return { type: 'database', info: dbInfo };
-        } catch (dbError) {
-          console.error(`${pageId} is neither a valid page nor database:`, dbError);
-          return { type: 'unknown', error: dbError };
-        }
-      } else {
-        console.error(`Error detecting page type for ${pageId}:`, pageError);
-        return { type: 'error', error: pageError };
-      }
-    }
-  } catch (error) {
-    console.error(`General error detecting page type for ${pageId}:`, error);
-    return { type: 'error', error };
   }
 }
 
 // Webアプリの設定
 const app = express();
-const PORT = process.env.PORT || 3000;
 
-// CORSを設定（必要に応じて）
+// CORSの設定
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
   next();
 });
 
-// APIエンドポイントを設定
+// ルートパス
 app.get('/', (req, res) => {
-  res.send('Notion Weekly Report Generator is running! 複数ページ対応版 (デバッグ強化版)');
+  res.send('Notion Weekly Report Generator is running! v2.0');
 });
 
-// Notionページの情報を確認するエンドポイント
+// ページ情報確認
 app.get('/check-page', async (req, res) => {
   const pageId = req.query.id || WEEKLY_REPORT_PAGE_ID;
   
   try {
     res.write(`Notionページ情報の確認を開始: ${pageId}\n\n`);
     
-    // ページタイプを検出
-    const pageTypeInfo = await detectNotionPageType(pageId);
-    res.write(`ページタイプ: ${pageTypeInfo.type}\n`);
-    
-    if (pageTypeInfo.type === 'error' || pageTypeInfo.type === 'unknown') {
-      res.write(`エラー情報: ${JSON.stringify(pageTypeInfo.error, null, 2)}\n`);
-      res.end();
-      return;
-    }
-    
-    // ページのアクセス権を確認
+    // ページの存在を確認
     const pageExists = await checkPageExists(pageId);
     res.write(`ページのアクセス権: ${pageExists ? 'アクセス可能' : 'アクセス不可'}\n\n`);
     
-    if (pageTypeInfo.type === 'page') {
-      res.write(`ページの詳細情報:\n`);
-      res.write(`ページID: ${pageTypeInfo.info.id}\n`);
-      res.write(`最終更新: ${new Date(pageTypeInfo.info.last_edited_time).toLocaleString('ja-JP')}\n`);
-      res.write(`作成日時: ${new Date(pageTypeInfo.info.created_time).toLocaleString('ja-JP')}\n`);
-    } else if (pageTypeInfo.type === 'database') {
-      res.write(`データベースの詳細情報:\n`);
-      res.write(`データベースID: ${pageTypeInfo.info.id}\n`);
-      res.write(`タイトル: ${pageTypeInfo.info.title[0]?.plain_text || 'タイトルなし'}\n`);
-      
-      res.write(`\nデータベースの列構造:\n`);
-      for (const [key, prop] of Object.entries(pageTypeInfo.info.properties)) {
-        res.write(`- ${key}: ${prop.type}\n`);
-      }
+    if (pageExists) {
+      res.write(`✅ ページは正常にアクセスできます\n`);
+    } else {
+      res.write(`❌ ページにアクセスできません。以下を確認してください：\n`);
+      res.write(`1. ページIDが正しいか\n`);
+      res.write(`2. インテグレーションにページへのアクセス権が付与されているか\n`);
     }
     
-    res.write(`\n✅ チェック完了\n`);
     res.end();
   } catch (error) {
     res.write(`⚠️ エラーが発生しました: ${error.message}\n`);
-    res.write(`詳細: ${JSON.stringify(error, null, 2)}\n`);
     res.end();
   }
 });
 
-// 進捗状況を詳細に表示する拡張バージョン
+// 週報生成
 app.get('/generate-report', async (req, res) => {
   try {
-    // 処理開始メッセージ
     res.write('週報生成を開始しました...\n');
     
     // ページ更新の確認
@@ -487,11 +401,6 @@ app.get('/generate-report', async (req, res) => {
     res.write('\nAIによる週報を生成中...\n');
     const report = await analyzeWeeklyUpdates(data);
     
-    // 週報保存先の情報確認
-    res.write(`\n週報保存先ページの確認: ${WEEKLY_REPORT_PAGE_ID}\n`);
-    const pageTypeInfo = await detectNotionPageType(WEEKLY_REPORT_PAGE_ID);
-    res.write(`週報保存先のタイプ: ${pageTypeInfo.type}\n`);
-    
     // Notionに書き込み
     res.write('週報をNotionに保存中...\n');
     const reportUrl = await writeWeeklyReportToNotion(report);
@@ -503,34 +412,29 @@ app.get('/generate-report', async (req, res) => {
     } else {
       res.write('\n❌ 週報の保存中にエラーが発生しました\n');
       res.write('考えられる原因:\n');
-      res.write('1. 指定されたページID（37380149ec3e47e99e8f533c3486ab89）が存在しない\n');
-      res.write('2. インテグレーションにページへのアクセス権がない\n');
-      res.write('3. ページIDがデータベースIDなど、子ページ作成に対応していない形式\n');
+      res.write('1. インテグレーションにページへのアクセス権がない\n');
+      res.write('2. ページIDが正しくない\n');
       res.write('\n対処方法:\n');
-      res.write('1. ページIDが正しいか確認してください\n');
-      res.write('2. Notionページの設定で「Connections」から統合（インテグレーション）のアクセス権を確認・追加してください\n');
-      res.write('3. /check-page エンドポイントでページの詳細情報を確認してください\n');
+      res.write('1. Notionページの設定で「Connections」から統合のアクセス権を確認\n');
+      res.write('2. /check-page エンドポイントでページの詳細情報を確認\n');
       res.end();
     }
   } catch (error) {
     res.write(`エラーが発生しました: ${error.message}\n\n`);
-    res.write(`詳細: ${JSON.stringify(error, null, 2)}\n`);
     res.end();
   }
 });
 
-// 過去の期間を指定して週報を生成するエンドポイント
+// 過去の期間の週報を生成
 app.get('/generate-report-custom', async (req, res) => {
   try {
-    // URLから日付パラメータを取得
-    const startDateStr = req.query.start; // 例: 2025-04-04
-    const endDateStr = req.query.end;     // 例: 2025-04-11
+    const startDateStr = req.query.start;
+    const endDateStr = req.query.end;
     
     if (!startDateStr || !endDateStr) {
       return res.status(400).send('開始日と終了日を指定してください。(?start=2025-04-04&end=2025-04-11)');
     }
     
-    // 日付をパース
     const startDate = new Date(startDateStr);
     const endDate = new Date(endDateStr);
     
@@ -552,7 +456,7 @@ app.get('/generate-report-custom', async (req, res) => {
     const data = await getNotionUpdates();
     const updates = data.updates;
     
-    // 終了日を手動で設定（getNotionUpdates内でlastCheckedDateが更新されるため）
+    // 終了日を手動で設定
     data.period.end = endDate;
     
     res.write(`期間: ${data.period.start.toLocaleString('ja-JP')} 〜 ${endDate.toLocaleString('ja-JP')}\n`);
@@ -570,11 +474,6 @@ app.get('/generate-report-custom', async (req, res) => {
     res.write('\nAIによる週報を生成中...\n');
     const report = await analyzeWeeklyUpdates(data);
     
-    // 週報保存先の情報確認
-    res.write(`\n週報保存先ページの確認: ${WEEKLY_REPORT_PAGE_ID}\n`);
-    const pageTypeInfo = await detectNotionPageType(WEEKLY_REPORT_PAGE_ID);
-    res.write(`週報保存先のタイプ: ${pageTypeInfo.type}\n`);
-    
     // Notionに書き込み
     res.write('週報をNotionに保存中...\n');
     const reportUrl = await writeWeeklyReportToNotion(report);
@@ -588,29 +487,19 @@ app.get('/generate-report-custom', async (req, res) => {
       res.end();
     } else {
       res.write('\n❌ 週報の保存中にエラーが発生しました\n');
-      res.write('考えられる原因:\n');
-      res.write('1. 指定されたページID（37380149ec3e47e99e8f533c3486ab89）が存在しない\n');
-      res.write('2. インテグレーションにページへのアクセス権がない\n');
-      res.write('3. ページIDがデータベースIDなど、子ページ作成に対応していない形式\n');
-      res.write('\n対処方法:\n');
-      res.write('1. ページIDが正しいか確認してください\n');
-      res.write('2. Notionページの設定で「Connections」から統合（インテグレーション）のアクセス権を確認・追加してください\n');
-      res.write('3. /check-page エンドポイントでページの詳細情報を確認してください\n');
       res.end();
     }
   } catch (error) {
     res.write(`エラーが発生しました: ${error.message}\n\n`);
-    res.write(`詳細: ${JSON.stringify(error, null, 2)}\n`);
     res.end();
   }
 });
 
-// シンプルなJSONレスポンスバージョン
+// API用エンドポイント
 app.get('/api/generate-report', async (req, res) => {
   try {
     const data = await getNotionUpdates();
     const updates = data.updates;
-    console.log(`Found ${updates.length} updated pages`);
     const report = await analyzeWeeklyUpdates(data);
     const reportUrl = await writeWeeklyReportToNotion(report);
     
@@ -626,28 +515,15 @@ app.get('/api/generate-report', async (req, res) => {
         reportUrl 
       });
     } else {
-      // ページタイプのチェック結果を含める
-      const pageTypeInfo = await detectNotionPageType(WEEKLY_REPORT_PAGE_ID);
-      
       res.status(500).json({ 
         success: false, 
-        error: "週報の保存に失敗しました",
-        period: {
-          start: data.period.start.toISOString(),
-          end: data.period.end.toISOString()
-        },
-        updatesCount: updates.length,
-        pageTypeInfo: {
-          pageId: WEEKLY_REPORT_PAGE_ID,
-          type: pageTypeInfo.type
-        }
+        error: "週報の保存に失敗しました"
       });
     }
   } catch (error) {
     res.status(500).json({ 
       success: false, 
-      error: error.message,
-      details: JSON.stringify(error, null, 2)
+      error: error.message
     });
   }
 });
@@ -671,4 +547,35 @@ cron.schedule('0 19 * * 5', async () => {
   }
 }, {
   timezone: "Asia/Tokyo"
+});
+
+// サーバー起動 - 明示的にIPを指定して起動
+const server = app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Server is listening on http://0.0.0.0:${PORT}`);
+  console.log(`Scheduled for Fridays at 19:00 JST`);
+  
+  // 起動時にPageの存在確認
+  console.log('Checking destination page on startup...');
+  checkPageExists(WEEKLY_REPORT_PAGE_ID).then(exists => {
+    if (exists) {
+      console.log('✅ Report destination page is accessible');
+    } else {
+      console.error('⚠️ WARNING: Report destination page is NOT accessible');
+    }
+  });
+});
+
+// プロセス終了時の処理
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received, shutting down gracefully');
+  server.close(() => {
+    console.log('Server closed');
+  });
+});
+
+process.on('SIGINT', () => {
+  console.log('SIGINT received, shutting down gracefully');
+  server.close(() => {
+    console.log('Server closed');
+  });
 });
