@@ -24,7 +24,7 @@ const NOTION_API_KEY = process.env.NOTION_API_KEY;
 const NOTION_PAGE_ID = process.env.NOTION_PAGE_ID; // カンマ区切りの複数ページID
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 // 週報を作成するページID - ハイフン付きフォーマットに修正
-const WEEKLY_REPORT_PAGE_ID = formatNotionId('37380149ec3e47e99e8f533c3486ab89');
+const WEEKLY_REPORT_PAGE_ID = formatNotionId('1d58d5a5222880279de7fa657e086213');
 // ポート設定（Renderで重要）
 const PORT = process.env.PORT || 3000;
 
