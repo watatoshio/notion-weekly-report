@@ -5,9 +5,9 @@ const { Client } = require('@notionhq/client');
 const { Configuration, OpenAIApi } = require('openai');
 const cron = require('node-cron');
 
-// 環境変数の設定（後でRender.comで設定します）
+// 環境変数の設定
 const NOTION_API_KEY = process.env.NOTION_API_KEY;
-const NOTION_PAGE_ID = process.env.NOTION_PAGE_ID;
+const NOTION_PAGE_ID = process.env.NOTION_PAGE_ID; // カンマ区切りの複数ページID
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
 // Notionクライアントの初期化
@@ -91,12 +91,22 @@ async function explorePageStructure(pageId, depth = 0, maxDepth = 2) {
   }
 }
 
-// メイン処理
+// メイン処理 - 複数ページ対応
 async function getNotionUpdates() {
-  const updates = await explorePageStructure(NOTION_PAGE_ID);
+  // カンマ区切りのページIDを配列に変換
+  const pageIds = NOTION_PAGE_ID.split(',').map(id => id.trim());
+  let allUpdates = [];
+  
+  // 各ページを順番に処理
+  for (const pageId of pageIds) {
+    console.log(`Processing page: ${pageId}`);
+    const updates = await explorePageStructure(pageId);
+    allUpdates = [...allUpdates, ...updates];
+  }
+  
   const currentDate = new Date();
   lastCheckedDate = currentDate; // 最終チェック日を更新
-  return updates;
+  return allUpdates;
 }
 
 // ChatGPTで週報分析を行う関数
@@ -140,16 +150,19 @@ ${update.content}
   }
 }
 
-// 週報をNotionに書き込む関数
+// 週報をNotionに書き込む関数 - 複数ページ対応
 async function writeWeeklyReportToNotion(report) {
   const today = new Date();
   const reportTitle = `週報 ${today.getFullYear()}/${today.getMonth() + 1}/${today.getDate()}`;
   
   try {
+    // 最初のページIDを親ページとして使用
+    const parentPageId = NOTION_PAGE_ID.split(',')[0].trim();
+    
     // 新しいページを作成
     const response = await notion.pages.create({
       parent: {
-        page_id: NOTION_PAGE_ID, // 親ページの下に作成
+        page_id: parentPageId, // 最初のページの下に作成
       },
       properties: {
         title: {
@@ -206,34 +219,91 @@ async function writeWeeklyReportToNotion(report) {
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// 週に一度、日曜日の夜に実行するスケジューラー
-cron.schedule('0 20 * * 0', async () => {
-  console.log('Running weekly report generation...');
-  const updates = await getNotionUpdates();
-  const report = await analyzeWeeklyUpdates(updates);
-  await writeWeeklyReportToNotion(report);
-}, {
-  timezone: "Asia/Tokyo"
-});
-
 // APIエンドポイントを設定
 app.get('/', (req, res) => {
-  res.send('Notion Weekly Report Generator is running!');
+  res.send('Notion Weekly Report Generator is running! 複数ページ対応版');
 });
 
+// 進捗状況を詳細に表示する拡張バージョン
 app.get('/generate-report', async (req, res) => {
+  try {
+    // 処理開始メッセージ
+    res.write('週報生成を開始しました...\n');
+    
+    // ページ更新の確認
+    res.write('Notionページの更新を確認中...\n');
+    const updates = await getNotionUpdates();
+    res.write(`${updates.length}件の更新を検出しました\n`);
+    
+    // 更新内容のサマリーを表示
+    if (updates.length > 0) {
+      res.write('\n更新されたページ一覧:\n');
+      updates.forEach(update => {
+        res.write(`- ${update.title} (${new Date(update.lastEditedTime).toLocaleString()})\n`);
+      });
+    }
+    
+    // レポート生成
+    res.write('\nAIによる週報を生成中...\n');
+    const report = await analyzeWeeklyUpdates(updates);
+    
+    // Notionに書き込み
+    res.write('週報をNotionに保存中...\n');
+    const reportUrl = await writeWeeklyReportToNotion(report);
+    
+    if (reportUrl) {
+      res.write(`\n✅ 週報の生成が完了しました！\n`);
+      res.write(`Notionで確認: ${reportUrl}\n`);
+      res.end();
+    } else {
+      res.write('\n❌ 週報の保存中にエラーが発生しました\n');
+      res.end();
+    }
+  } catch (error) {
+    res.status(500).send(`エラーが発生しました: ${error.message}`);
+  }
+});
+
+// シンプルなJSONレスポンスバージョン
+app.get('/api/generate-report', async (req, res) => {
   try {
     const updates = await getNotionUpdates();
     console.log(`Found ${updates.length} updated pages`);
     const report = await analyzeWeeklyUpdates(updates);
     const reportUrl = await writeWeeklyReportToNotion(report);
-    res.json({ success: true, updatesCount: updates.length, reportUrl });
+    res.json({ 
+      success: true, 
+      updatesCount: updates.length, 
+      updatedPages: updates.map(u => u.title),
+      reportUrl 
+    });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
+// 週に一度、日曜日の夜に実行するスケジューラー
+cron.schedule('0 20 * * 0', async () => {
+  console.log('Running weekly report generation...');
+  try {
+    const updates = await getNotionUpdates();
+    console.log(`Found ${updates.length} updated pages`);
+    if (updates.length > 0) {
+      const report = await analyzeWeeklyUpdates(updates);
+      const reportUrl = await writeWeeklyReportToNotion(report);
+      console.log(`Weekly report created: ${reportUrl}`);
+    } else {
+      console.log('No updates found, skipping report generation');
+    }
+  } catch (error) {
+    console.error('Error in scheduled report generation:', error);
+  }
+}, {
+  timezone: "Asia/Tokyo"
+});
+
 // サーバー起動
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+  console.log(`Configured page IDs: ${NOTION_PAGE_ID.split(',').length}`);
 });
