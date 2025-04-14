@@ -289,6 +289,77 @@ app.get('/generate-report', async (req, res) => {
   }
 });
 
+// 過去の期間を指定して週報を生成するエンドポイント
+app.get('/generate-report-custom', async (req, res) => {
+  try {
+    // URLから日付パラメータを取得
+    const startDateStr = req.query.start; // 例: 2025-04-04
+    const endDateStr = req.query.end;     // 例: 2025-04-11
+    
+    if (!startDateStr || !endDateStr) {
+      return res.status(400).send('開始日と終了日を指定してください。(?start=2025-04-04&end=2025-04-11)');
+    }
+    
+    // 日付をパース
+    const startDate = new Date(startDateStr);
+    const endDate = new Date(endDateStr);
+    
+    if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+      return res.status(400).send('無効な日付形式です。YYYY-MM-DD形式で指定してください。');
+    }
+    
+    // 処理開始メッセージ
+    res.write(`${startDateStr}から${endDateStr}までの週報生成を開始しました...\n`);
+    
+    // 最終チェック日を一時的に保存
+    const originalLastCheckedDate = new Date(lastCheckedDate);
+    
+    // 指定された期間で上書き
+    lastCheckedDate = startDate;
+    
+    // ページ更新の確認
+    res.write('Notionページの更新を確認中...\n');
+    const data = await getNotionUpdates();
+    const updates = data.updates;
+    
+    // 終了日を手動で設定（getNotionUpdates内でlastCheckedDateが更新されるため）
+    data.period.end = endDate;
+    
+    res.write(`期間: ${data.period.start.toLocaleString('ja-JP')} 〜 ${endDate.toLocaleString('ja-JP')}\n`);
+    res.write(`${updates.length}件の更新を検出しました\n`);
+    
+    // 更新内容のサマリーを表示
+    if (updates.length > 0) {
+      res.write('\n更新されたページ一覧:\n');
+      updates.forEach(update => {
+        res.write(`- ${update.title} (${new Date(update.lastEditedTime).toLocaleString('ja-JP')})\n`);
+      });
+    }
+    
+    // レポート生成
+    res.write('\nAIによる週報を生成中...\n');
+    const report = await analyzeWeeklyUpdates(data);
+    
+    // Notionに書き込み
+    res.write('週報をNotionに保存中...\n');
+    const reportUrl = await writeWeeklyReportToNotion(report);
+    
+    // 元の最終チェック日を復元
+    lastCheckedDate = originalLastCheckedDate;
+    
+    if (reportUrl) {
+      res.write(`\n✅ 週報の生成が完了しました！\n`);
+      res.write(`Notionで確認: ${reportUrl}\n`);
+      res.end();
+    } else {
+      res.write('\n❌ 週報の保存中にエラーが発生しました\n');
+      res.end();
+    }
+  } catch (error) {
+    res.status(500).send(`エラーが発生しました: ${error.message}`);
+  }
+});
+
 // シンプルなJSONレスポンスバージョン
 app.get('/api/generate-report', async (req, res) => {
   try {
