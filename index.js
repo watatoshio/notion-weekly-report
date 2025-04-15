@@ -34,16 +34,6 @@ const { Client } = require('@notionhq/client');
 const { Configuration, OpenAIApi } = require('openai');
 const cron = require('node-cron');
 
-// Webアプリの設定 - 重要: expressアプリを先に初期化
-const app = express();
-
-// CORSの設定
-app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
-  next();
-});
-
 // ハイフンなしのIDをハイフン付きに変換する関数
 function formatNotionId(id) {
   if (!id || typeof id !== 'string') return id;
@@ -392,6 +382,16 @@ async function writeWeeklyReportToNotion(report) {
     }
   }
 }
+
+// Expressアプリケーションの初期化
+const app = express();
+
+// CORSの設定
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+  next();
+});
 
 // ルートパス
 app.get('/', (req, res) => {
