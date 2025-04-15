@@ -15,7 +15,7 @@ function formatNotionId(id) {
 const NOTION_API_KEY = process.env.NOTION_API_KEY;
 const NOTION_PAGE_ID = process.env.NOTION_PAGE_ID || '016b7ee1-4192-49cd-bea4-04522214f2d1,8620f694-c929-4e28-a1fc-23741ac82372,54608237-b872-4bf0-a2fd-9c66fd10c1c3';
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const WEEKLY_REPORT_PAGE_ID = process.env.WEEKLY_REPORT_PAGE_ID ? formatNotionId(process.env.WEEKLY_REPORT_PAGE_ID) : '37380149-ec3e-47e9-9e8f-533c3486ab89';
+const WEEKLY_REPORT_PAGE_ID = process.env.WEEKLY_REPORT_PAGE_ID ? formatNotionId(process.env.WEEKLY_REPORT_PAGE_ID) : '4a6158f0-c7e3-4317-8364-11de5e834013';
 const PORT = process.env.PORT || 3000;
 
 // ログ
