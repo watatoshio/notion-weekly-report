@@ -21,10 +21,10 @@ function formatNotionId(id) {
 
 // 環境変数の設定
 const NOTION_API_KEY = process.env.NOTION_API_KEY;
-const NOTION_PAGE_ID = process.env.NOTION_PAGE_ID; // カンマ区切りの複数ページID
+const NOTION_PAGE_ID = process.env.NOTION_PAGE_ID || '016b7ee1-4192-49cd-bea4-04522214f2d1,8620f694-c929-4e28-a1fc-23741ac82372,54608237-b872-4bf0-a2fd-9c66fd10c1c3';
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-// 週報を作成するページID - ハイフン付きフォーマットに修正
-const WEEKLY_REPORT_PAGE_ID = formatNotionId('4a6158f0c7e34317836411de5e834013');
+// 週報を作成するページID - 環境変数から取得、なければデフォルト値を使用
+const WEEKLY_REPORT_PAGE_ID = process.env.WEEKLY_REPORT_PAGE_ID ? formatNotionId(process.env.WEEKLY_REPORT_PAGE_ID) : '37380149-ec3e-47e9-9e8f-533c3486ab89';
 // ポート設定（Renderで重要）
 const PORT = process.env.PORT || 3000;
 
@@ -148,6 +148,7 @@ async function getNotionUpdates() {
   const currentDate = new Date();
   
   console.log(`Checking updates from ${lastCheckedDate.toISOString()} to ${currentDate.toISOString()}`);
+  console.log(`Monitoring these pages: ${pageIds.join(', ')}`);
   
   // 各ページを順番に処理
   for (const pageId of pageIds) {
@@ -536,6 +537,10 @@ app.get('/setup-guide', (req, res) => {
         <div class="step">
           <h2>Step 1: 対象となるNotionページを開く</h2>
           <p>週報を保存したいページ（ID: <code>${WEEKLY_REPORT_PAGE_ID}</code>）をNotionで開きます。</p>
+          <p>データを監視するページ：</p>
+          <ul>
+            ${NOTION_PAGE_ID.split(',').map(id => `<li><code>${formatNotionId(id.trim())}</code></li>`).join('')}
+          </ul>
         </div>
         
         <div class="step">
@@ -561,6 +566,9 @@ app.get('/setup-guide', (req, res) => {
           <p>
             <a href="/check-page" target="_blank">ページ接続テスト</a> にアクセスして、接続が正常に行われているか確認してください。<br>
             「✅ ページは正常にアクセスできます」と表示されれば成功です。
+          </p>
+          <p>
+            <a href="/verify-token" target="_blank">APIトークン検証</a> でAPIトークンが有効か確認することもできます。
           </p>
         </div>
         
@@ -631,35 +639,4 @@ cron.schedule('0 19 * * 5', async () => {
   }
 }, {
   timezone: "Asia/Tokyo"
-});
-
-// サーバー起動 - 明示的にIPを指定して起動
-const server = app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server is listening on http://0.0.0.0:${PORT}`);
-  console.log(`Scheduled for Fridays at 19:00 JST`);
-  
-  // 起動時にPageの存在確認
-  console.log('Checking destination page on startup...');
-  checkPageExists(WEEKLY_REPORT_PAGE_ID).then(exists => {
-    if (exists) {
-      console.log('✅ Report destination page is accessible');
-    } else {
-      console.error('⚠️ WARNING: Report destination page is NOT accessible');
-    }
-  });
-});
-
-// プロセス終了時の処理
-process.on('SIGTERM', () => {
-  console.log('SIGTERM received, shutting down gracefully');
-  server.close(() => {
-    console.log('Server closed');
-  });
-});
-
-process.on('SIGINT', () => {
-  console.log('SIGINT received, shutting down gracefully');
-  server.close(() => {
-    console.log('Server closed');
-  });
 });
