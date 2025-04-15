@@ -1,9 +1,48 @@
-// index.js
+// サーバー起動 - 明示的にIPを指定して起動
+const server = app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Server is listening on http://0.0.0.0:${PORT}`);
+  console.log(`Scheduled for Fridays at 19:00 JST`);
+  
+  // 起動時にPageの存在確認
+  console.log('Checking destination page on startup...');
+  checkPageExists(WEEKLY_REPORT_PAGE_ID).then(exists => {
+    if (exists) {
+      console.log('✅ Report destination page is accessible');
+    } else {
+      console.error('⚠️ WARNING: Report destination page is NOT accessible');
+    }
+  });
+});
+
+// プロセス終了時の処理
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received, shutting down gracefully');
+  server.close(() => {
+    console.log('Server closed');
+  });
+});
+
+process.on('SIGINT', () => {
+  console.log('SIGINT received, shutting down gracefully');
+  server.close(() => {
+    console.log('Server closed');
+  });
+});// index.js
 require('dotenv').config();
 const express = require('express');
 const { Client } = require('@notionhq/client');
 const { Configuration, OpenAIApi } = require('openai');
 const cron = require('node-cron');
+
+// Webアプリの設定 - 重要: expressアプリを先に初期化
+const app = express();
+
+// CORSの設定
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+  next();
+});
 
 // ハイフンなしのIDをハイフン付きに変換する関数
 function formatNotionId(id) {
@@ -354,16 +393,6 @@ async function writeWeeklyReportToNotion(report) {
   }
 }
 
-// Webアプリの設定
-const app = express();
-
-// CORSの設定
-app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
-  next();
-});
-
 // ルートパス
 app.get('/', (req, res) => {
   res.send('Notion Weekly Report Generator is running! v2.0');
@@ -585,6 +614,42 @@ app.get('/setup-guide', (req, res) => {
       </body>
     </html>
   `);
+});
+
+// Notionのアクセストークン検証エンドポイント
+app.get('/verify-token', async (req, res) => {
+  try {
+    res.write('NotionAPIトークンの検証を実行中...\n\n');
+    
+    // 最も基本的な操作でAPIを検証
+    try {
+      const response = await notion.users.list({});
+      res.write(`✅ Notion APIトークンは有効です\n`);
+      res.write(`認証済みユーザー数: ${response.results.length}\n\n`);
+      
+      // 最初のユーザー情報を表示
+      if (response.results.length > 0) {
+        const user = response.results[0];
+        res.write(`認証アカウント情報:\n`);
+        res.write(`- タイプ: ${user.type}\n`);
+        if (user.name) res.write(`- 名前: ${user.name}\n`);
+        if (user.bot && user.bot.owner) {
+          res.write(`- ボット所有者: ${user.bot.owner.type}\n`);
+        }
+      }
+    } catch (tokenError) {
+      res.write(`❌ Notion APIトークンが無効です\n`);
+      res.write(`エラー: ${tokenError.message}\n\n`);
+      res.write(`対処方法:\n`);
+      res.write(`1. Notion Developers ページで新しいトークンを生成してください\n`);
+      res.write(`2. Render.comの環境変数でNOTION_API_KEYを更新してください\n`);
+    }
+    
+    res.end();
+  } catch (error) {
+    res.write(`エラーが発生しました: ${error.message}\n`);
+    res.end();
+  }
 });
 
 // API用エンドポイント
