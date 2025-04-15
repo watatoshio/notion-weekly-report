@@ -5,6 +5,19 @@ const { Client } = require('@notionhq/client');
 const { Configuration, OpenAIApi } = require('openai');
 const cron = require('node-cron');
 
+// ハイフンなしのIDをハイフン付きに変換する関数
+function formatNotionId(id) {
+  if (!id || typeof id !== 'string') return id;
+  
+  // すでにハイフンが含まれている場合はそのまま返す
+  if (id.includes('-')) return id;
+  
+  // 8-4-4-4-12 の形式にフォーマット
+  return id.replace(
+    /^([0-9a-f]{8})([0-9a-f]{4})([0-9a-f]{4})([0-9a-f]{4})([0-9a-f]{12})$/,
+    '$1-$2-$3-$4-$5'
+  );
+}
 
 // 環境変数が設定されていない場合のエラーチェック
 if (!process.env.NOTION_API_KEY) {
