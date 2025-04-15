@@ -210,6 +210,33 @@ app.use((req, res, next) => {
   next();
 });
 
+// ページ情報確認
+app.get('/check-page', async (req, res) => {
+  const pageId = req.query.id || WEEKLY_REPORT_PAGE_ID;
+
+  try {
+    res.write(`Notionページ情報の確認を開始: ${pageId}\n\n`);
+    const pageExists = await checkPageExists(pageId);
+    res.write(`ページのアクセス権: ${pageExists ? 'アクセス可能' : 'アクセス不可'}\n\n`);
+
+    if (pageExists) {
+      res.write(`✅ ページは正常にアクセスできます\n`);
+    } else {
+      res.write(`❌ ページにアクセスできません。以下を確認してください：\n`);
+      res.write(`1. ページIDが正しいか\n`);
+      res.write(`2. インテグレーションにページへのアクセス権が付与されているか\n`);
+    }
+
+    res.end();
+  } catch (error) {
+    res.write(`⚠️ エラーが発生しました: ${error.message}\n`);
+    res.end();
+  }
+});
+
+
+
+
 app.get('/', (_, res) => res.send('Notion Weekly Report Generator is running!'));
 app.get('/generate-report', async (req, res) => {
   const data = await getNotionUpdates();
